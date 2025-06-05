@@ -1,29 +1,26 @@
-
 "use client"; // For useState and event handlers
 
 import Image from 'next/image';
 import { notFound, useParams } from 'next/navigation';
 import type { Product } from '@/types';
-import { mockProducts } from '@/lib/mock-data';
+// REMOVE: import { mockProducts } from '@/lib/mock-data';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { Card, CardContent, CardHeader, CardFooter } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card'; // Removed CardFooter as it's not used directly here
 import { Input } from '@/components/ui/input';
 import { ArrowLeft, MinusCircle, PlusCircle, CheckCircle, XCircle, Info, ListChecks, Settings, Leaf, ShieldAlert, MessageSquare, Package, Send } from 'lucide-react';
 import { ProductPageAddToCartButton } from '@/components/products/ProductPageAddToCartButton';
 import { StarRating } from '@/components/shared/StarRating';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react'; // Added useCallback
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import { ProductList } from '@/components/products/ProductList';
 
-async function getProductById(id: string): Promise<Product | undefined> {
-  return new Promise(resolve => {
-    setTimeout(() => {
-      resolve(mockProducts.find(p => p.id === id));
-    }, 0);
-  });
-}
+import { db } from '@/lib/firebase'; // ADDED
+import { doc, getDoc, collection, query, where, limit, getDocs, QueryConstraint } from 'firebase/firestore'; // ADDED, QueryConstraint
+
+// REMOVE: async function getProductById(id: string): Promise<Product | undefined> { ... }
+// Firestore fetching will be integrated into useEffect
 
 interface ProductInfoSectionProps {
   title: string;
@@ -34,7 +31,7 @@ interface ProductInfoSectionProps {
 
 const ProductInfoSection: React.FC<ProductInfoSectionProps> = ({ title, content, IconComponent, className }) => {
   if (!content || (Array.isArray(content) && content.length === 0 && typeof content !== 'string' && !React.isValidElement(content))) {
-    // Let caller handle empty content display logic (e.g. "No related products")
+    // Let caller handle empty content display logic
   }
 
   return (
@@ -56,7 +53,6 @@ const ProductInfoSection: React.FC<ProductInfoSectionProps> = ({ title, content,
   );
 };
 
-
 export default function ProductDetailPage() {
   const routeParams = useParams<{ id: string }>();
   const [product, setProduct] = useState<Product | null>(null);
@@ -64,42 +60,68 @@ export default function ProductDetailPage() {
   const [quantity, setQuantity] = useState(1);
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
 
-  useEffect(() => {
-    async function fetchProductData(productId: string) {
-      setIsLoading(true); // Ensure loading is true at the start of a fetch attempt
-      const fetchedProduct = await getProductById(productId);
-      if (fetchedProduct) {
+  const fetchProductAndRelated = useCallback(async (productId: string) => {
+    setIsLoading(true);
+    setProduct(null); // Reset product state on new fetch
+    setRelatedProducts([]); // Reset related products
+
+    try {
+      // Fetch main product
+      const productDocRef = doc(db, 'products', productId);
+      const productDocSnap = await getDoc(productDocRef);
+
+      if (productDocSnap.exists()) {
+        const fetchedProductData = productDocSnap.data() as Omit<Product, 'id'>;
+        const fetchedProduct = { id: productDocSnap.id, ...fetchedProductData };
         setProduct(fetchedProduct);
 
-        const allProducts = mockProducts;
-        let filteredRelated = allProducts
-          .filter(p => p.category === fetchedProduct.category && p.id !== fetchedProduct.id)
-          .slice(0, 3);
+        // Fetch related products (same category, not the current product, limit 3)
+        const relatedProductsQueryConstraints: QueryConstraint[] = [
+          where('category', '==', fetchedProduct.category),
+          where('id', '!=', fetchedProduct.id), // Firestore allows inequality on document ID
+          limit(3)
+        ];
+        const relatedProductsQuery = query(collection(db, 'products'), ...relatedProductsQueryConstraints);
+        const relatedSnapshot = await getDocs(relatedProductsQuery);
+        let fetchedRelated = relatedSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as Product));
 
-        if (filteredRelated.length < 3) {
-          const otherProducts = allProducts
-            .filter(p => p.category !== fetchedProduct.category && p.id !== fetchedProduct.id);
-          const needed = 3 - filteredRelated.length;
-          const shuffledOthers = [...otherProducts].sort(() => 0.5 - Math.random());
-          filteredRelated = [...filteredRelated, ...shuffledOthers.slice(0, needed)];
+        // If not enough related products in the same category, fetch some others
+        if (fetchedRelated.length < 3) {
+          const needed = 3 - fetchedRelated.length;
+          // Ensure existingIds does not exceed Firestore's 10-item limit for 'not-in'
+          const existingIds = [fetchedProduct.id, ...fetchedRelated.map(p => p.id)].slice(0, 10);
+
+          const otherProductsQueryConstraints: QueryConstraint[] = [
+            where('id', 'not-in', existingIds),
+            limit(needed)
+          ];
+          // Create a query for other products
+          const otherProductsQuery = query(collection(db, 'products'), ...otherProductsQueryConstraints);
+          const otherSnapshot = await getDocs(otherProductsQuery);
+          const additionalProducts = otherSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as Product));
+          fetchedRelated = [...fetchedRelated, ...additionalProducts];
         }
-        setRelatedProducts(filteredRelated.slice(0,3));
-      } else {
-        setProduct(null); // Explicitly set product to null if not found
-      }
-      setIsLoading(false); // Set loading to false after the fetch attempt completes
-    }
+        setRelatedProducts(fetchedRelated.slice(0,3)); // Ensure max 3 related products
 
-    if (routeParams && typeof routeParams.id === 'string') {
-      fetchProductData(routeParams.id);
+      } else {
+        console.log("No such product found in Firestore!");
+        setProduct(null); // Handled by notFound() if product remains null after loading
+      }
+    } catch (error) {
+      console.error("Error fetching product data from Firestore:", error);
+      setProduct(null); // Ensure product is null on error to trigger notFound
+    } finally {
+      setIsLoading(false);
     }
-    // If routeParams.id is not a string (e.g., routeParams is {} initially),
-    // fetchProductData is not called. isLoading remains true.
-    // When routeParams.id becomes a string, this effect re-runs, and fetchProductData is called.
-    // If routeParams.id never becomes a string (e.g. if routing/param setup is incorrect for this page),
-    // isLoading would remain true, and the loading spinner would persist.
-    // This scenario implies a routing issue rather than a data fetching issue for this specific page.
-  }, [routeParams?.id]);
+  }, []); // No dependencies, as db and firestore functions are stable
+
+  useEffect(() => {
+    if (routeParams && typeof routeParams.id === 'string') {
+      fetchProductAndRelated(routeParams.id);
+    } else {
+       if (!routeParams?.id) setIsLoading(false);
+    }
+  }, [routeParams?.id, fetchProductAndRelated]);
 
 
   if (isLoading) {
@@ -131,7 +153,6 @@ export default function ProductDetailPage() {
         <div className="flex flex-col items-start space-y-2">
           <StarRating rating={product.rating} reviewCount={product.reviewCount} starClassName="h-6 w-6" />
           <p className="text-sm text-muted-foreground">Based on {product.reviewCount} review{product.reviewCount > 1 ? 's' : ''}.</p>
-          {/* Placeholder for individual reviews if implemented later */}
         </div>
       );
     }
@@ -189,7 +210,7 @@ export default function ProductDetailPage() {
               )}
               
               <p className="text-base text-foreground mb-6 space-y-3">
-                {product.description.split('\\n\\n').map((paragraph, index) => (
+                {typeof product.description === 'string' && product.description.split('\n\n').map((paragraph, index) => (
                   <span key={index} className="block">{paragraph}</span>
                 ))}
               </p>
@@ -242,7 +263,7 @@ export default function ProductDetailPage() {
               />
             )}
             
-            {product.ingredients && (
+            {product.ingredients && product.ingredients.length > 0 && (
               <ProductInfoSection
                 title="Ingredients / Composition"
                 content={product.ingredients}
@@ -293,4 +314,3 @@ export default function ProductDetailPage() {
     </div>
   );
 }
-
