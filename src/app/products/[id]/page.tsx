@@ -4,7 +4,6 @@
 import Image from 'next/image';
 import { notFound, useParams } from 'next/navigation';
 import type { Product } from '@/types';
-import { mockProducts } from '@/lib/mock-data';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardFooter } from '@/components/ui/card';
@@ -12,18 +11,90 @@ import { Input } from '@/components/ui/input';
 import { ArrowLeft, MinusCircle, PlusCircle, CheckCircle, XCircle, Info, ListChecks, Settings, Leaf, ShieldAlert, MessageSquare, Package, Send } from 'lucide-react';
 import { ProductPageAddToCartButton } from '@/components/products/ProductPageAddToCartButton';
 import { StarRating } from '@/components/shared/StarRating';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import { ProductList } from '@/components/products/ProductList';
+import { db } from '@/lib/firebase';
+import { doc, getDoc, collection, getDocs, query, where, limit, QueryConstraint, documentId, orderBy } from 'firebase/firestore';
 
-async function getProductById(id: string): Promise<Product | undefined> {
-  return new Promise(resolve => {
-    setTimeout(() => {
-      resolve(mockProducts.find(p => p.id === id));
-    }, 0);
-  });
+// Firestore fetch function for a single product
+async function getProductByIdFromDb(productId: string): Promise<Product | null> {
+  if (!productId) return null;
+  try {
+    const productDocRef = doc(db, 'products', productId);
+    const docSnap = await getDoc(productDocRef);
+
+    if (docSnap.exists()) {
+      return { id: docSnap.id, ...docSnap.data() } as Product;
+    } else {
+      console.log('No such product document!');
+      return null;
+    }
+  } catch (error) {
+    console.error("Error fetching product:", error);
+    return null;
+  }
 }
+
+// Firestore fetch function for related products
+async function getRelatedProductsFromDb(currentProduct: Product, count: number = 3): Promise<Product[]> {
+  if (!currentProduct) return [];
+  let related: Product[] = [];
+
+  try {
+    // 1. Fetch products from the same category (excluding current product)
+    const categoryQueryConstraints: QueryConstraint[] = [
+      where('category', '==', currentProduct.category),
+      where(documentId(), '!=', currentProduct.id), // Exclude current product using documentId()
+      limit(count)
+    ];
+    const categoryQuery = query(collection(db, 'products'), ...categoryQueryConstraints);
+    const categorySnapshot = await getDocs(categoryQuery);
+    categorySnapshot.forEach(doc => {
+      related.push({ id: doc.id, ...doc.data() } as Product);
+    });
+
+    // 2. If not enough, fetch other products (excluding current and already fetched)
+    if (related.length < count) {
+      const neededMore = count - related.length;
+      const excludeIds = [currentProduct.id, ...related.map(p => p.id)];
+
+      const otherQueryConstraints: QueryConstraint[] = [
+        where(documentId(), 'not-in', excludeIds.slice(0, 10)), // 'not-in' has a limit of 10 comparison values
+        limit(neededMore)
+        // Potentially add orderBy('name') or another field for more consistent "other" products
+      ];
+      // If excludeIds is empty, Firestore throws error, so only add 'not-in' if there are IDs to exclude
+      if (excludeIds.length > 0) {
+         // Firestore 'not-in' can't take an empty array.
+      } else {
+        // if excludeIds is empty, it means only currentProduct.id was there,
+        // which should be handled by where(documentId(), '!=', currentProduct.id) if we were to make another query.
+        // For simplicity here, if related.length is 0, this part will fetch `neededMore` random items not matching currentProduct.id
+        // (though `documentId() != currentProduct.id` would be better if this query was standalone)
+
+        // To keep it simple: fetch any products, then filter client-side if absolutely necessary,
+        // or accept that it might include current product if excludeIds is empty and we don't add specific clauses.
+        // The current structure of excludeIds will always include currentProduct.id, so it's fine.
+      }
+
+
+      const othersQuery = query(collection(db, 'products'), ...otherQueryConstraints);
+      const othersSnapshot = await getDocs(othersQuery);
+      othersSnapshot.forEach(doc => {
+        if (related.length < count && !related.find(p=>p.id === doc.id) && doc.id !== currentProduct.id) { // Double check not already added
+            related.push({ id: doc.id, ...doc.data() } as Product);
+        }
+      });
+    }
+    return related.slice(0, count); // Ensure we don't exceed count due to any edge cases
+  } catch (error) {
+    console.error("Error fetching related products:", error);
+    return related; // Return whatever was fetched before error
+  }
+}
+
 
 interface ProductInfoSectionProps {
   title: string;
@@ -64,42 +135,38 @@ export default function ProductDetailPage() {
   const [quantity, setQuantity] = useState(1);
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
 
+  const productId = routeParams?.id as string;
+
   useEffect(() => {
-    async function fetchProductData(productId: string) {
-      setIsLoading(true); // Ensure loading is true at the start of a fetch attempt
-      const fetchedProduct = await getProductById(productId);
-      if (fetchedProduct) {
+    const fetchProductData = async () => {
+      if (!productId) {
+        setIsLoading(false); // No ID, so not loading, will likely go to notFound or error
+        setProduct(null);
+        return;
+      }
+
+      setIsLoading(true);
+      try {
+        const fetchedProduct = await getProductByIdFromDb(productId);
         setProduct(fetchedProduct);
 
-        const allProducts = mockProducts;
-        let filteredRelated = allProducts
-          .filter(p => p.category === fetchedProduct.category && p.id !== fetchedProduct.id)
-          .slice(0, 3);
-
-        if (filteredRelated.length < 3) {
-          const otherProducts = allProducts
-            .filter(p => p.category !== fetchedProduct.category && p.id !== fetchedProduct.id);
-          const needed = 3 - filteredRelated.length;
-          const shuffledOthers = [...otherProducts].sort(() => 0.5 - Math.random());
-          filteredRelated = [...filteredRelated, ...shuffledOthers.slice(0, needed)];
+        if (fetchedProduct) {
+          const fetchedRelatedProducts = await getRelatedProductsFromDb(fetchedProduct);
+          setRelatedProducts(fetchedRelatedProducts);
+        } else {
+          setRelatedProducts([]); // No product, so no related products
         }
-        setRelatedProducts(filteredRelated.slice(0,3));
-      } else {
-        setProduct(null); // Explicitly set product to null if not found
+      } catch (error) {
+        console.error("Failed to fetch product data:", error);
+        setProduct(null);
+        setRelatedProducts([]);
+      } finally {
+        setIsLoading(false);
       }
-      setIsLoading(false); // Set loading to false after the fetch attempt completes
-    }
+    };
 
-    if (routeParams && typeof routeParams.id === 'string') {
-      fetchProductData(routeParams.id);
-    }
-    // If routeParams.id is not a string (e.g., routeParams is {} initially),
-    // fetchProductData is not called. isLoading remains true.
-    // When routeParams.id becomes a string, this effect re-runs, and fetchProductData is called.
-    // If routeParams.id never becomes a string (e.g. if routing/param setup is incorrect for this page),
-    // isLoading would remain true, and the loading spinner would persist.
-    // This scenario implies a routing issue rather than a data fetching issue for this specific page.
-  }, [routeParams?.id]);
+    fetchProductData();
+  }, [productId]);
 
 
   if (isLoading) {
@@ -154,8 +221,8 @@ export default function ProductDetailPage() {
           <CardHeader className="p-0 md:p-4">
             <div className="aspect-square relative w-full rounded-lg overflow-hidden">
               <Image
-                src={product.imageSrc}
-                alt={product.imageAlt}
+                src={product.imageSrc || '/images/placeholder.png'} // Fallback image
+                alt={product.imageAlt || 'Product image'} // Fallback alt
                 fill
                 sizes="(max-width: 768px) 100vw, 50vw"
                 className="object-cover"
@@ -178,7 +245,7 @@ export default function ProductDetailPage() {
               )}
 
               <p className="text-3xl font-semibold text-primary mb-4">
-                ${product.price.toFixed(2)}
+                ${product.price ? product.price.toFixed(2) : 'N/A'}
               </p>
 
               {product.availability && (
@@ -189,7 +256,7 @@ export default function ProductDetailPage() {
               )}
               
               <p className="text-base text-foreground mb-6 space-y-3">
-                {product.description.split('\\n\\n').map((paragraph, index) => (
+                {(product.description || '').split('\\n\\n').map((paragraph, index) => (
                   <span key={index} className="block">{paragraph}</span>
                 ))}
               </p>

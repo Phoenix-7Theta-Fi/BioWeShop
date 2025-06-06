@@ -1,32 +1,102 @@
 
 import { ProductList } from '@/components/products/ProductList';
-import { mockProducts } from '@/lib/mock-data';
 import type { Product } from '@/types';
 import { PackageSearch } from 'lucide-react';
+import { db } from '@/lib/firebase'; // Firebase instance
+import { collection, getDocs, query, where, orderBy, QueryConstraint } from 'firebase/firestore';
 
 interface ProductsPageProps {
-  searchParams: { q?: string };
+  searchParams: { q?: string; category?: string }; // Allow category filtering via searchParams
 }
 
-async function getFilteredProducts(search?: string): Promise<Product[]> {
-  // In a real app, you'd fetch this from a database or API with search params
-  if (!search) {
-    return mockProducts;
+async function getFilteredProducts(search?: string, categorySearch?: string): Promise<Product[]> {
+  const productsCollectionRef = collection(db, 'products');
+  const queryConstraints: QueryConstraint[] = [];
+
+  if (search) {
+    // Simple "starts with" query for name. Case-sensitive in Firestore.
+    // For case-insensitive, you'd typically store a lowercase version of the name.
+    queryConstraints.push(where('name', '>=', search));
+    queryConstraints.push(where('name', '<=', search + '\uf8ff'));
   }
 
-  const searchLower = search.toLowerCase();
-  return mockProducts.filter(product => {
-    const searchableText = [
-      product.name,
-      product.description,
-      product.category,
-      product.dataAiHint,
-      ...(product.features || []),
-      ...(Array.isArray(product.ingredients) ? product.ingredients : [])
-    ].join(' ').toLowerCase();
+  if (categorySearch) {
+    queryConstraints.push(where('category', '==', categorySearch));
+  }
+
+  // Add a default sort order if needed, e.g., by name
+  if (!queryConstraints.some(constraint => constraint.type === 'orderBy')) {
+    queryConstraints.push(orderBy('name'));
+  }
+
+  const finalQuery = query(productsCollectionRef, ...queryConstraints);
+
+  try {
+    const querySnapshot = await getDocs(finalQuery);
+    const products: Product[] = querySnapshot.docs.map(doc => {
+      const data = doc.data();
+      // Ensure all fields from Product type are mapped
+      return {
+        id: doc.id,
+        name: data.name || '',
+        description: data.description || '',
+        price: data.price || 0,
+        imageSrc: data.imageSrc || '',
+        imageAlt: data.imageAlt || '',
+        category: data.category || '',
+        dataAiHint: data.dataAiHint || '',
+        rating: data.rating, // Optional
+        reviewCount: data.reviewCount, // Optional
+        availability: data.availability, // Optional
+        features: data.features, // Optional
+        howToUse: data.howToUse, // Optional
+        ingredients: data.ingredients, // Optional
+        safetyInfo: data.safetyInfo, // Optional
+      } as Product; // Type assertion
+    });
+
+    // If both search and categorySearch are provided, and Firestore's OR queries are not used (they are complex),
+    // you might need to do a client-side intersection if you queried them separately.
+    // Or, if you want to filter by search term across multiple fields (name, description, etc.) after an initial category filter:
+    if (search && categorySearch && products.length > 0) {
+      // This is a client-side filter on top of Firestore results if Firestore couldn't handle the combined logic perfectly.
+      const searchLower = search.toLowerCase();
+      return products.filter(product =>
+        product.name.toLowerCase().includes(searchLower) ||
+        product.description.toLowerCase().includes(searchLower)
+        // Add other fields to search if desired
+      );
+    }
     
-    return searchableText.includes(searchLower);
-  });
+    // If only search (without category) is used and we want to search more broadly than just name:
+    if (search && !categorySearch && products.length > 0) {
+        const searchLower = search.toLowerCase();
+        // This client-side filter is applied if the Firestore query for 'name' was too restrictive
+        // or if you want to search other fields too.
+        // Note: This fetches products where name STARTS WITH search, then filters more broadly.
+        // If you want a general text search, you'd fetch all or use a search service.
+        const allProductsSnapshot = await getDocs(query(productsCollectionRef, orderBy('name')));
+        const allProducts = allProductsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+
+        return allProducts.filter(product => {
+            const searchableText = [
+              product.name,
+              product.description,
+              // product.category, // Already filtered by category if categorySearch was present
+              product.dataAiHint,
+              ...(product.features || []),
+              ...(Array.isArray(product.ingredients) ? product.ingredients : (typeof product.ingredients === 'string' ? [product.ingredients] : [])),
+            ].join(' ').toLowerCase();
+            return searchableText.includes(searchLower);
+        });
+    }
+
+
+    return products;
+  } catch (error) {
+    console.error("Error fetching products from Firestore:", error);
+    return []; // Return empty array on error
+  }
 }
 
 export const metadata = {
@@ -35,7 +105,8 @@ export const metadata = {
 };
 
 export default async function ProductsPage({ searchParams }: ProductsPageProps) {
-  const products = await getFilteredProducts(searchParams.q);
+  // Pass both search query and category to the fetching function
+  const products = await getFilteredProducts(searchParams.q, searchParams.category);
 
   return (
     <div className="space-y-12">

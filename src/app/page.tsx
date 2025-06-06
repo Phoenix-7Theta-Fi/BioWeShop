@@ -4,15 +4,30 @@ import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { ProductList } from '@/components/products/ProductList';
-import { mockProducts, mockTestimonials, mockBlogPosts } from '@/lib/mock-data';
+import { mockTestimonials, mockBlogPosts } from '@/lib/mock-data'; // mockProducts removed
 import type { Product, Testimonial, BlogPost } from '@/types';
 import { ChevronRight, Leaf, ShieldCheck, Smile, Truck, MessageSquareQuote, Rss } from 'lucide-react';
 import { TestimonialCard } from '@/components/home/TestimonialCard';
 import { BlogPostCard } from '@/components/blog/BlogPostCard'; // Import BlogPostCard
+import { db } from '@/lib/firebase';
+import { collection, getDocs, query, limit, orderBy } from 'firebase/firestore';
 
-// Simulate fetching data - we'll take just a few for the homepage
+// Fetch featured products from Firestore
 async function getFeaturedProducts(): Promise<Product[]> {
-  return Promise.resolve(mockProducts.slice(0, 4)); // Show first 4 products as featured
+  try {
+    const productsCollectionRef = collection(db, 'products');
+    // Example: Order by name and take the first 4.
+    // In a real app, you might have a 'featured' flag or order by popularity/date.
+    const q = query(productsCollectionRef, orderBy('name'), limit(4));
+    const querySnapshot = await getDocs(q);
+    const products: Product[] = querySnapshot.docs.map(doc => {
+      return { id: doc.id, ...doc.data() } as Product;
+    });
+    return products;
+  } catch (error) {
+    console.error("Error fetching featured products:", error);
+    return []; // Return empty array on error
+  }
 }
 
 async function getTestimonials(): Promise<Testimonial[]> {
