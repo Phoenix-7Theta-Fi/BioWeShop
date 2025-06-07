@@ -3,11 +3,12 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { useEffect, useState } from 'react';
-import { ShoppingBag, Menu, Search as SearchIcon } from 'lucide-react';
+import { ShoppingBag, Menu, User as UserIcon, LogOut as LogOutIcon } from 'lucide-react'; // Added UserIcon, LogOutIcon
 import { SearchInput } from '@/components/shared/SearchInput';
 import { useSearch } from '@/lib/search';
 import { useCart } from '@/context/CartContext';
-import { usePathname } from 'next/navigation';
+import { useAuth } from '@/context/AuthContext'; // Added useAuth
+import { usePathname, useRouter } from 'next/navigation'; // Added useRouter
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -21,8 +22,10 @@ import {
 export function Navbar() {
   const { getCartItemCount } = useCart();
   const pathname = usePathname();
+  const router = useRouter(); // For redirecting after logout
+  const { currentUser, logout, loading: authLoading } = useAuth(); // Auth state
   const cartItemCount = getCartItemCount();
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(false); // For mobile menu
   const { search, setSearch } = useSearch();
   const [searchQuery, setSearchQuery] = useState(search);
 
@@ -33,6 +36,18 @@ export function Navbar() {
   const handleSearch = (query: string) => {
     setSearchQuery(query);
     setSearch(query);
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      // Optional: redirect to home or login page after logout
+      // router.push('/');
+      if (isOpen) setIsOpen(false); // Close mobile menu if open
+    } catch (error) {
+      console.error("Logout failed", error);
+      // Handle logout error (e.g., display a notification)
+    }
   };
 
   const navLinks = [
@@ -96,6 +111,23 @@ export function Navbar() {
                 {link.label}
               </Link>
             ))}
+            {/* Auth links for desktop */}
+            {!authLoading && currentUser ? (
+              <>
+                <Link href="/profile" className={cn("text-lg hover:text-primary transition-colors flex items-center", getIsActive(pathname, "/profile") ? "text-primary font-semibold" : "text-foreground")}>
+                  <UserIcon className="h-5 w-5 mr-1" /> Profile
+                </Link>
+                <button onClick={handleLogout} className="text-lg hover:text-primary transition-colors flex items-center text-foreground">
+                  <LogOutIcon className="h-5 w-5 mr-1" /> Logout
+                </button>
+              </>
+            ) : !authLoading && !currentUser ? (
+              <>
+                <Link href="/login" className={cn("text-lg hover:text-primary transition-colors", getIsActive(pathname, "/login") ? "text-primary font-semibold" : "text-foreground")}>Login</Link>
+                <Link href="/signup" className={cn("text-lg hover:text-primary transition-colors", getIsActive(pathname, "/signup") ? "text-primary font-semibold" : "text-foreground")}>Signup</Link>
+              </>
+            ) : null}
+            {/* Render nothing while authLoading to prevent flash of unauthenticated content */}
           </div>
 
           <div className="flex items-center space-x-4">
@@ -147,6 +179,23 @@ export function Navbar() {
                         {link.label}
                       </Link>
                       ))}
+                      {/* Auth links for mobile */}
+                      {!authLoading && currentUser ? (
+                        <>
+                          <Link href="/profile" onClick={() => setIsOpen(false)} className={cn("text-lg hover:text-primary transition-colors px-4 py-2 rounded-md flex items-center", getIsActive(pathname, "/profile") ? "text-primary font-semibold bg-primary/10" : "text-foreground")}>
+                            <UserIcon className="h-5 w-5 mr-2" /> Profile
+                          </Link>
+                          <button onClick={handleLogout} className="w-full text-left text-lg hover:text-primary transition-colors px-4 py-2 rounded-md flex items-center text-foreground">
+                            <LogOutIcon className="h-5 w-5 mr-2" /> Logout
+                          </button>
+                        </>
+                      ) : !authLoading && !currentUser ? (
+                        <>
+                          <Link href="/login" onClick={() => setIsOpen(false)} className={cn("text-lg hover:text-primary transition-colors px-4 py-2 rounded-md", getIsActive(pathname, "/login") ? "text-primary font-semibold bg-primary/10" : "text-foreground")}>Login</Link>
+                          <Link href="/signup" onClick={() => setIsOpen(false)} className={cn("text-lg hover:text-primary transition-colors px-4 py-2 rounded-md", getIsActive(pathname, "/signup") ? "text-primary font-semibold bg-primary/10" : "text-foreground")}>Signup</Link>
+                        </>
+                      ) : null}
+                       {/* Render nothing while authLoading */}
                     </div>
                   </div>
                 </SheetContent>

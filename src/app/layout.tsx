@@ -4,6 +4,7 @@ import { Poppins as FontSans } from 'next/font/google'; // Changed from Inter to
 import './globals.css';
 import { cn } from '@/lib/utils';
 import { CartProvider } from '@/context/CartContext';
+import { AuthProvider } from '@/context/AuthContext'; // Added AuthProvider
 import { AppLayout } from '@/components/layout/AppLayout';
 
 const fontSans = FontSans({
@@ -30,9 +31,11 @@ export default function RootLayout({
           fontSans.variable
         )}
       >
-        <CartProvider>
-          <AppLayout>{children}</AppLayout>
-        </CartProvider>
+        <AuthProvider> {/* Added AuthProvider */}
+          <CartProvider>
+            <AppLayout>{children}</AppLayout>
+          </CartProvider>
+        </AuthProvider> {/* Added AuthProvider */}
       </body>
     </html>
   );
