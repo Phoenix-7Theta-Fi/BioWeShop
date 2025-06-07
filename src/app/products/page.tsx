@@ -6,7 +6,7 @@ import { db } from '@/lib/firebase'; // Firebase instance
 import { collection, getDocs, query, where, orderBy, QueryConstraint } from 'firebase/firestore';
 
 interface ProductsPageProps {
-  searchParams: { q?: string; category?: string }; // Allow category filtering via searchParams
+  searchParams: any; // Updated for async searchParams in Next.js 15
 }
 
 async function getFilteredProducts(search?: string, categorySearch?: string): Promise<Product[]> {
@@ -105,8 +105,9 @@ export const metadata = {
 };
 
 export default async function ProductsPage({ searchParams }: ProductsPageProps) {
-  // Pass both search query and category to the fetching function
-  const products = await getFilteredProducts(searchParams.q, searchParams.category);
+  // Await searchParams as required by Next.js 15
+  const params = await searchParams;
+  const products = await getFilteredProducts(params.q, params.category);
 
   return (
     <div className="space-y-12">
