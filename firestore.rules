@@ -1,0 +1,70 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Users Collection
+    match /users/{userId} {
+      // Allow user to read their own document
+      allow read: if request.auth != null && request.auth.uid == userId;
+
+      // Allow authenticated user to create their own document if it doesn't exist yet
+      // This is for the AuthContext logic that creates a user profile on first login/signup
+      allow create: if request.auth != null && request.auth.uid == userId && !existsAfter(path('users', userId));
+
+      // Allow user to update their own document (e.g., display name, photoURL)
+      // Restrict what fields they can update to prevent them from changing their role.
+      allow update: if request.auth != null && request.auth.uid == userId && !(request.resource.data.role != resource.data.role);
+
+      // Admins can read any user document
+      allow read: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+
+      // Admins can create user documents (needed for seed-admin.ts if run by an admin, or for future admin actions)
+      // Note: The seed-admin.ts script as written uses client SDKs.
+      // For the very first admin, rules might need to be more open temporarily,
+      // or the script needs to be run by an already authenticated user with rights.
+      // This rule assumes an admin is performing the create action.
+      allow create: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+
+      // Admins can update any user document (e.g., change a role)
+      allow update: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+
+      // Admins can delete user documents (optional, be cautious)
+      // allow delete: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Products Collection
+    // Assuming products are publicly readable but only writable by admins (or a specific backend service/script)
+    match /products/{productId} {
+      allow read: if true; // Products are publicly viewable
+
+      // Allow write (create, update, delete) only if the user is an admin.
+      // This would protect the seed-firestore.ts script unless it's run by an admin
+      // or with temporarily open rules/Admin SDK.
+      allow write: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Cart Collection (Example - needs to be tailored to your cart logic)
+    // This is a placeholder, you'll need to define rules based on how your cart works.
+    // Typically, a user can only access their own cart.
+    match /carts/{cartId} { // Assuming cartId is often same as userId for simplicity
+      allow read, write: if request.auth != null && request.auth.uid == cartId;
+      // Or if carts are subcollections of users: /users/{userId}/cart/{itemId}
+    }
+
+    // Blog Posts Collection (Example - if you have one)
+    match /blogPosts/{postId} {
+      allow read: if true; // Blog posts are publicly viewable
+      allow write: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'; // Only admins can write blog posts
+    }
+
+    // Testimonials Collection (Example - if you have one)
+    match /testimonials/{testimonialId} {
+      allow read: if true; // Testimonials are publicly viewable
+      allow write: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'; // Only admins can write testimonials
+    }
+
+    // General principle: Deny all access by default unless explicitly allowed.
+    // The rules above define explicit allows. Anything not matched is denied.
+  }
+}

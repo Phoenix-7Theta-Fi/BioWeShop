@@ -44,3 +44,12 @@ export interface Testimonial {
   avatarSrc?: string; // URL for placeholder avatar
   dataAiHint?: string; // For avatar placeholder
 }
+
+export interface AppUser {
+  uid: string;
+  email?: string | null; // Aligning with Firebase User type
+  displayName?: string | null; // Aligning with Firebase User type
+  role: 'admin' | 'user';
+  photoURL?: string | null; // Optional: if you want to store this
+  createdAt?: any; // Optional: Firestore timestamp for when the user doc was created
+}
